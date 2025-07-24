@@ -1,96 +1,112 @@
 import os
-import json
 import re
-from jinja2 import Environment, FileSystemLoader
-from xhtml2pdf import pisa
-from docx import Document
 from bs4 import BeautifulSoup
-import cohere
-
-COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-cohere_client = cohere.Client(COHERE_API_KEY) if COHERE_API_KEY else None
+from fpdf import FPDF
+from docx import Document
 
 def get_templates():
-    return [f.split('.')[0] for f in os.listdir("templates") if f.endswith(".html")]
+    return ["Modern", "Classic", "Minimal"]
 
-def generate_resume(name, email, phone, linkedin, github, summary, skills, experience, education,
-                    template="classic", job_description="", theme="Light"):
-    env = Environment(loader=FileSystemLoader("templates"))
-    template_file = env.get_template(f"{template}.html")
+def save_feedback(user, feedback):
+    os.makedirs("feedback", exist_ok=True)
+    with open(f"feedback/{user.replace(' ', '_').lower()}.txt", "a", encoding="utf-8") as f:
+        f.write(feedback.strip() + "\n\n")
 
-    skills_list = [s.strip() for s in skills.split(",") if s.strip()]
-    context = {
-        "name": name,
-        "email": email,
-        "phone": phone,
-        "linkedin": linkedin,
-        "github": github,
-        "summary": summary,
-        "skills": skills_list,
-        "experience": experience,
-        "education": education,
-        "theme": theme
+def generate_resume(name, email, phone, linkedin, github,
+                    summary, skills, experience, education,
+                    template="Modern", job_description="", theme="Light"):
+    # Basic HTML formatting for demo
+    html = f"""
+    <html>
+    <head>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            background-color: {"#fff" if theme == "Light" else "#1e1e1e"};
+            color: {"#000" if theme == "Light" else "#fff"};
+            padding: 20px;
+        }}
+    </style>
+    </head>
+    <body>
+        <h1>{name}</h1>
+        <p><strong>Email:</strong> {email} | <strong>Phone:</strong> {phone}</p>
+        <p><strong>LinkedIn:</strong> {linkedin} | <strong>GitHub:</strong> {github}</p>
+        <h2>Summary</h2>
+        <p>{summary}</p>
+        <h2>Skills</h2>
+        <p>{skills}</p>
+        <h2>Experience</h2>
+        <p>{experience}</p>
+        <h2>Education</h2>
+        <p>{education}</p>
+    </body>
+    </html>
+    """
+
+    # ATS Score
+    ats_score = 0
+    if job_description:
+        resume_text = " ".join([summary, skills, experience, education]).lower()
+        job_keywords = set(re.findall(r'\b\w+\b', job_description.lower()))
+        matched = [kw for kw in job_keywords if kw in resume_text]
+        ats_score = (len(matched) / len(job_keywords)) * 100 if job_keywords else 0
+
+    return html, ats_score
+
+def html_to_pdf(html_path, pdf_path):
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text()
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_font("Arial", size=12)
+        for line in text.split("\n"):
+            pdf.multi_cell(0, 10, line)
+        pdf.output(pdf_path)
+        return None
+    except Exception as e:
+        return str(e)
+
+def html_to_docx(html_path, docx_path):
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    soup = BeautifulSoup(html, "html.parser")
+    doc = Document()
+    doc.add_heading("Resume", 0)
+    for element in soup.find_all(["h1", "h2", "p"]):
+        if element.name == "h1":
+            doc.add_heading(element.get_text(), level=1)
+        elif element.name == "h2":
+            doc.add_heading(element.get_text(), level=2)
+        else:
+            doc.add_paragraph(element.get_text())
+    doc.save(docx_path)
+
+def suggest_keywords(job_description, current_skills):
+    job_description = job_description.lower()
+    current_skills = current_skills.lower()
+
+    roles = {
+        "data scientist": ["python", "machine learning", "sql", "pandas", "numpy"],
+        "web developer": ["html", "css", "javascript", "react", "node.js"],
+        "data analyst": ["excel", "sql", "tableau", "powerbi", "statistics"],
+        "ai engineer": ["deep learning", "tensorflow", "pytorch", "nlp", "mlops"],
+        "software engineer": ["java", "c++", "python", "git", "linux"],
     }
 
-    resume_html = template_file.render(context)
+    suggestions = []
+    for role, keywords in roles.items():
+        if role in job_description:
+            for kw in keywords:
+                if kw not in current_skills:
+                    suggestions.append(kw)
+            break  # only apply the first matching role
 
-    # Use Cohere to optimize job description keywords if possible
-    if cohere_client and job_description:
-        ats_score = cohere_keyword_match(cohere_client, skills_list, job_description)
-    else:
-        ats_score = simple_keyword_match(skills_list, job_description) if job_description else 0
-
-    return resume_html, ats_score
-
-def simple_keyword_match(skills, job_desc):
-    job_keywords = re.findall(r'\b\w+\b', job_desc.lower())
-    matched = [skill.lower() for skill in skills if skill.lower() in job_keywords]
-    return (len(matched) / len(skills)) * 100 if skills else 0
-
-def cohere_keyword_match(client, skills, job_desc):
-    # Basic prompt to count matched keywords
-    prompt = f"Skills: {', '.join(skills)}\nJob Description: {job_desc}\n" \
-             "Count how many of the skills appear in the job description and provide the percentage match."
-
-    response = client.generate(
-        model="command-xlarge-nightly",
-        prompt=prompt,
-        max_tokens=20,
-        temperature=0.0,
-        stop_sequences=["--"]
-    )
-    # Parse percentage from response text (fallback to simple match)
-    try:
-        text = response.generations[0].text.strip()
-        # Try to extract a number from response
-        import re
-        match = re.search(r'(\d+\.?\d*)%', text)
-        if match:
-            return float(match.group(1))
-        else:
-            return simple_keyword_match(skills, job_desc)
-    except Exception:
-        return simple_keyword_match(skills, job_desc)
-
-def save_feedback(name, feedback):
-    data = {"name": name, "feedback": feedback}
-    os.makedirs("data", exist_ok=True)
-    with open("data/feedback.json", "a", encoding="utf-8") as f:
-        json.dump(data, f)
-        f.write("\n")
-
-def html_to_pdf(source_html_path, output_pdf_path):
-    with open(source_html_path, 'r', encoding='utf-8') as html_file:
-        html_content = html_file.read()
-    with open(output_pdf_path, 'wb') as pdf_file:
-        pisa_status = pisa.CreatePDF(src=html_content, dest=pdf_file)
-    return pisa_status.err
-
-def html_to_docx(source_html_path, output_docx_path):
-    with open(source_html_path, 'r', encoding='utf-8') as html_file:
-        html_content = html_file.read()
-    soup = BeautifulSoup(html_content, 'html.parser')
-    text = soup.get_text(separator="\n")
-    doc = Document()
-    doc.add_paragraph(text)
-    doc.save(output_docx_path)
+    return suggestions
