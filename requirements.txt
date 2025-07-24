@@ -3,8 +3,9 @@ jinja2
 python-docx
 weasyprint
 python-dotenv
-streamlit
-bs4
+beautifulsoup4
 fpdf
 fastapi
 uvicorn
+xhtml2pdf
+cohere
