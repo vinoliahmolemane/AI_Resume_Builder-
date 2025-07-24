@@ -1,0 +1,25 @@
+from jinja2 import Environment, FileSystemLoader
+import os
+
+# Set up template environment
+env = Environment(loader=FileSystemLoader('templates'))
+template = env.get_template('classic.html')  # or 'modern.html' / 'elegant.html'
+
+# Dummy data
+data = {
+    'name': 'John Doe',
+    'email': 'john@example.com',
+    'phone': '+123456789',
+    'linkedin': 'https://linkedin.com/in/johndoe',
+    'github': 'https://github.com/johndoe',
+    'summary': 'Experienced software engineer with a passion for building scalable systems.',
+    'skills': ['Python', 'JavaScript', 'Machine Learning', 'Docker', 'SQL'],
+    'experience': 'Senior Developer at XYZ Corp. (2018–2024). Developed full-stack applications.',
+    'education': 'B.Sc. in Computer Science, ABC University, 2017'
+}
+
+# Render and save
+output = template.render(data)
+os.makedirs('resumes', exist_ok=True)
+with open('resumes/generated_resume_classic.html', 'w', encoding='utf-8') as f:
+    f.write(output)
